@@ -427,8 +427,8 @@ body {
             <button class="btn-sm primary" onclick="openAddStudentModal()">＋追加</button>
             <button class="btn-sm" onclick="clearAllStudents()" style="color:var(--danger);border-color:var(--danger)">全消去</button>
           </div>
-          <button class="btn-sm" onclick="importFromCMClass()" style="margin-top:5px;width:100%;background:#f0f9e8;border-color:var(--success);color:var(--success);font-size:0.7rem" title="CM CLASSの名簿を自動読み込み">
-            📥 CM CLASSから読込
+          <button class="btn-sm" onclick="openPasteModal()" style="margin-top:5px;width:100%;background:#f0f9e8;border-color:var(--success);color:var(--success);font-size:0.7rem">
+            📋 名簿を貼り付けて読込
           </button>
         </div>
         <div class="student-list" id="studentList"></div>
@@ -484,6 +484,34 @@ body {
     <div class="modal-footer">
       <button class="btn-modal-cancel" onclick="closeModal('addStudentModal')">キャンセル</button>
       <button class="btn-modal-ok" onclick="addStudent()">追加</button>
+    </div>
+  </div>
+</div>
+
+<!-- 名簿貼り付けモーダル -->
+<div class="modal-overlay" id="pasteModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>📋 名簿を貼り付けて読込</h3>
+      <button class="modal-close" onclick="closeModal('pasteModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:0.8rem;color:var(--ink2);margin-bottom:10px;line-height:1.6">
+        CM CLASSの名簿をコピーして貼り付けてください。<br>
+        <span style="color:var(--muted)">形式：名前,性別（1行1人）</span>
+      </p>
+      <div style="background:#f8f9fc;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:0.78rem;color:var(--muted);font-family:monospace;line-height:1.8">
+        山田 太郎,男<br>
+        鈴木 花子,女<br>
+        田中 次郎,男
+      </div>
+      <label class="form-label">名簿データ（貼り付け）</label>
+      <textarea id="pasteArea" style="width:100%;height:200px;padding:10px;border:1.5px solid var(--border);border-radius:8px;font-size:0.85rem;font-family:inherit;resize:vertical" placeholder="ここに貼り付けてください…"></textarea>
+      <p id="pastePreview" style="font-size:0.76rem;color:var(--success);margin-top:6px"></p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-modal-cancel" onclick="closeModal('pasteModal')">キャンセル</button>
+      <button class="btn-modal-ok" onclick="executePasteImport()">読み込む</button>
     </div>
   </div>
 </div>
@@ -997,7 +1025,59 @@ function esc(s){
 }
 
 // ============================================================
-// CM CLASS 名簿インポート
+// 名簿貼り付けインポート
+// ============================================================
+function openPasteModal() {
+  document.getElementById('pasteArea').value = '';
+  document.getElementById('pastePreview').textContent = '';
+  document.getElementById('pasteModal').classList.add('active');
+  setTimeout(function(){ document.getElementById('pasteArea').focus(); }, 100);
+
+  // リアルタイムプレビュー
+  document.getElementById('pasteArea').oninput = function() {
+    var lines = this.value.trim().split('\n').filter(function(l){ return l.trim(); });
+    var valid = lines.filter(function(l){ return l.includes(',') || l.trim(); });
+    document.getElementById('pastePreview').textContent =
+      valid.length > 0 ? valid.length + '名を検出しました' : '';
+  };
+}
+
+function executePasteImport() {
+  var raw = document.getElementById('pasteArea').value.trim();
+  if (!raw) { showToast('データを貼り付けてください', 'error'); return; }
+
+  var lines = raw.split('\n').filter(function(l){ return l.trim(); });
+  var parsed = [];
+  lines.forEach(function(line, i) {
+    var parts = line.split(',');
+    var name = (parts[0] || '').trim();
+    var gender = (parts[1] || '').trim();
+    if (name) parsed.push({ name: name, gender: gender });
+  });
+
+  if (parsed.length === 0) { showToast('読み込めるデータがありません', 'error'); return; }
+
+  var existCount = students.length;
+  if (existCount > 0) {
+    if (!confirm('現在' + existCount + '名のデータがあります。\n' + parsed.length + '名の名簿で上書きしますか？\n※委員会の決定データは保持されます')) return;
+  }
+
+  var oldStudents = students.slice();
+  students = parsed.map(function(s, i) {
+    var num = i + 1;
+    var existing = oldStudents.find(function(os){ return os.name === s.name && os.num === num; });
+    if (existing) return existing;
+    return makeStu(Date.now() + Math.random() + i, num, s.name);
+  });
+
+  save();
+  closeModal('pasteModal');
+  renderStudentList();
+  showToast(students.length + '名を読み込みました ✅', 'success');
+}
+
+// ============================================================
+// CM CLASS 名簿インポート（localStorage版・同一ドメイン時）
 // ============================================================
 function importFromCMClass() {
   try {
