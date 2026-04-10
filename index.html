@@ -839,8 +839,12 @@ function getApplicants(commId){
   return list.sort((a,b)=>b.score-a.score);
 }
 function isAsgnAnywhere(sid){
-  return [...Object.values(assignments),...Object.values(leaderAsgn)].some(arr=>arr.includes(sid));
+  const s=String(sid);
+  return [...Object.values(assignments),...Object.values(leaderAsgn)].some(arr=>arr.map(String).includes(s));
 }
+
+// 他委員会決定済み非表示フラグ（グローバルで保持）
+let hideAssignedFlag = true;
 
 function renderCommDetail(commId){
   const comm=getCommInfo(commId);
@@ -851,22 +855,22 @@ function renderCommDetail(commId){
     ?'ランクABC×10。希望理由を読んでランクを付けてからスコア順に選んでください。'
     :'スコア＝理由ランク×10 ＋ 希望順位ボーナス（第一:3 第二:2 第三:1）';
 
-  // 全申込者（スコア順）
   const allApps=getApplicants(commId);
 
-  // 「他委員会決定済みを隠す」フィルター（デフォルトON）
-  const hideAssigned = document.getElementById('toggleHideAssigned')?.checked !== false;
-  const apps = allApps.filter(a=>{
-    if(asgnArr.includes(a.student.id)) return true;  // この委員会の決定者は常に表示
-    if(hideAssigned && isAsgnAnywhere(a.student.id)) return false; // 他で決定済みは非表示
+  // 他委員会で決定済みの児童を除外（フラグON時）
+  const apps=allApps.filter(a=>{
+    const sid=String(a.student.id);
+    if(asgnArr.map(String).includes(sid)) return true; // この委員会の決定者は常に表示
+    if(hideAssignedFlag && isAsgnAnywhere(a.student.id)) return false;
     return true;
   });
-  const hiddenCount = allApps.length - apps.length;
+  const hiddenCount=allApps.length - apps.length;
 
   const cards=apps.length===0
-    ?`<div class="no-applicants">希望者がいません${hiddenCount>0?' （'+hiddenCount+'名は他委員会で決定済のため非表示）':''}</div>`
+    ?`<div class="no-applicants">希望者がいません${hiddenCount>0?' （他委員会決定済み '+hiddenCount+'名を非表示）':''}</div>`
     :apps.map(a=>{
-      const here=asgnArr.includes(a.student.id);
+      const sid=String(a.student.id);
+      const here=asgnArr.map(String).includes(sid);
       const elsewhere=!here&&isAsgnAnywhere(a.student.id);
       const cardCls=here?'assigned':elsewhere?'conflict':'';
       const sLabel=`スコア: ${a.score}${a.rank?' (ランク'+a.rank+')':' (ランク未付与)'}`;
@@ -904,11 +908,10 @@ function renderCommDetail(commId){
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
       <p style="font-size:0.74rem;color:var(--muted);flex:1">${note}</p>
       <label style="display:flex;align-items:center;gap:5px;font-size:0.74rem;color:var(--ink2);white-space:nowrap;cursor:pointer">
-        <input type="checkbox" id="toggleHideAssigned" ${hideAssigned?'checked':''} onchange="renderCommDetail('${commId}')">
-        他委員会決定済みを隠す
+        <input type="checkbox" ${hideAssignedFlag?'checked':''} onchange="hideAssignedFlag=this.checked;renderCommDetail('${commId}')">
+        他委員会決定済みを隠す${hiddenCount>0?' ('+hiddenCount+'名)':''}
       </label>
     </div>
-    ${hiddenCount>0&&!hideAssigned?'':(hiddenCount>0?`<p style="font-size:0.72rem;color:var(--muted);margin-bottom:8px">※ ${hiddenCount}名を非表示中</p>`:'') }
     ${cards}`;
 }
 
@@ -938,17 +941,12 @@ function doUnassign(cid,sid){
   showToast('取り消しました');
 }
 
-// 決定変更のたびに結果タブも更新
-function refreshAll(cid){
-  save();
-  renderCommTab();
-  if(activeComm===cid) renderCommDetail(cid);
-  // 結果タブが表示中なら即更新
-  if(document.getElementById('tab-result').classList.contains('active')) renderResult();
-}
+// ============================================================
+// 結果タブ
+// ============================================================
 function renderResult(){
-  const allAsgn=[...Object.values(assignments),...Object.values(leaderAsgn)].flat();
-  const unassigned=students.filter(s=>!allAsgn.includes(s.id));
+  const allAsgn=[...Object.values(assignments),...Object.values(leaderAsgn)].flat().map(String);
+  const unassigned=students.filter(s=>!allAsgn.includes(String(s.id)));
 
   const uSec=document.getElementById('unassignedSection');
   if(unassigned.length>0){
@@ -963,11 +961,11 @@ function renderResult(){
 
   // リーダー結果
   document.getElementById('leaderResultGrid').innerHTML=LEADERS.map(ldr=>{
-    const ids=leaderAsgn[ldr.id]||[];
+    const ids=(leaderAsgn[ldr.id]||[]);
     const rows=ids.length===0
       ?`<div class="result-empty">（決定者なし）</div>`
       :ids.map((sid,i)=>{
-        const stu=students.find(s=>s.id===sid); if(!stu)return'';
+        const stu=students.find(s=>String(s.id)===String(sid)); if(!stu)return'';
         const lp=stu.leaderPrefs[ldr.id];
         return `<div class="result-member">
           <div class="num">${i+1}</div>
@@ -991,11 +989,11 @@ function renderResult(){
 
   // 通常委員会結果
   document.getElementById('resultGrid').innerHTML=COMMITTEES.map(c=>{
-    const ids=assignments[c.id]||[];
+    const ids=(assignments[c.id]||[]);
     const rows=ids.length===0
       ?`<div class="result-empty">（決定者なし）</div>`
       :ids.map((sid,i)=>{
-        const stu=students.find(s=>s.id===sid); if(!stu)return'';
+        const stu=students.find(s=>String(s.id)===String(sid)); if(!stu)return'';
         const pref=stu.prefs.find(p=>p.commId===c.id);
         const pn=pref?stu.prefs.indexOf(pref)+1:0;
         return `<div class="result-member">
