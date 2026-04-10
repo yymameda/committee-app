@@ -401,6 +401,50 @@ body {
 .toast.show { transform: translateX(-50%) translateY(0); }
 .toast.success { background: var(--success); }
 .toast.error   { background: var(--danger); }
+/* 希望外割り当てセクション */
+.fallback-section {
+  background: white; border-radius: 12px;
+  border: 2px solid var(--accent); margin-bottom: 16px;
+  overflow: hidden; box-shadow: var(--shadow);
+}
+.fallback-header {
+  background: linear-gradient(135deg, #b7510a, var(--accent));
+  color: white; padding: 11px 16px;
+  display: flex; align-items: center; gap: 10px;
+}
+.fallback-header h3 { font-size: 0.92rem; font-weight: 700; flex: 1; }
+.fallback-body { padding: 14px 16px; }
+.fallback-student-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 10px;
+  border: 1.5px solid var(--border); margin-bottom: 8px;
+  background: #fff8f3;
+}
+.fallback-student-row.assigned { background: var(--success-l); border-color: var(--success); }
+.fallback-stu-info { flex: 1; }
+.fallback-stu-name { font-size: 0.88rem; font-weight: 700; }
+.fallback-stu-prefs { font-size: 0.72rem; color: var(--muted); margin-top: 2px; }
+.fallback-select {
+  flex: 0 0 175px; padding: 7px 10px;
+  border: 1.5px solid var(--border); border-radius: 8px;
+  font-size: 0.82rem; font-family: inherit; background: white;
+}
+.fallback-select:focus { outline: none; border-color: var(--accent); }
+.fallback-assign-btn {
+  padding: 7px 14px; border-radius: 8px;
+  border: 1.5px solid var(--accent); background: white; color: var(--accent);
+  font-size: 0.78rem; font-weight: 700; font-family: inherit;
+  cursor: pointer; transition: all 0.15s; white-space: nowrap; flex-shrink: 0;
+}
+.fallback-assign-btn:hover { background: var(--accent); color: white; }
+.fallback-assign-btn.done { background: var(--success); border-color: var(--success); color: white; cursor: default; }
+.fallback-unassign-btn {
+  padding: 7px 10px; border-radius: 8px;
+  border: 1.5px solid var(--border); background: white; color: var(--muted);
+  font-size: 0.74rem; font-family: inherit; cursor: pointer; transition: all 0.15s; flex-shrink: 0;
+}
+.fallback-unassign-btn:hover { border-color: var(--danger); color: var(--danger); }
+
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-thumb { background: #ccd0dc; border-radius: 4px; }
 </style>
@@ -462,6 +506,7 @@ body {
         <button class="btn-sm" onclick="exportCSV()">📋 CSV出力</button>
       </div>
       <div id="unassignedSection"></div>
+      <div id="fallbackSection"></div>
       <div class="leader-result-grid" id="leaderResultGrid"></div>
       <div class="result-grid" id="resultGrid"></div>
     </div>
@@ -942,6 +987,95 @@ function doUnassign(cid,sid){
 }
 
 // ============================================================
+// 希望外割り当てセクション
+// ============================================================
+
+// 空き枠のある委員会一覧を返す
+function getAvailableComms(){
+  const result=[];
+  LEADERS.forEach(ldr=>{
+    const cnt=(leaderAsgn[ldr.id]||[]).length;
+    if(cnt < ldr.cap) result.push({id:ldr.id, name:ldr.name, icon:ldr.icon, cap:ldr.cap, cnt, isLdr:true});
+  });
+  COMMITTEES.forEach(c=>{
+    const cnt=(assignments[c.id]||[]).length;
+    if(cnt < c.cap) result.push({id:c.id, name:c.name, icon:c.icon, cap:c.cap, cnt, isLdr:false});
+  });
+  return result;
+}
+
+// 希望外割り当てセクションを描画
+function renderFallback(){
+  const allAsgn=[...Object.values(assignments),...Object.values(leaderAsgn)].flat().map(String);
+  // 未決定かつ全希望に入れなかった児童
+  const unassigned=students.filter(s=>!allAsgn.includes(String(s.id)));
+  const el=document.getElementById('fallbackSection');
+  if(!el) return;
+  if(unassigned.length===0){ el.innerHTML=''; return; }
+
+  const available=getAvailableComms();
+  const commOptions=available.length===0
+    ?'<option value="">空き枠なし</option>'
+    :available.map(c=>`<option value="${c.id}">${c.icon} ${c.name}（空き${c.cap-c.cnt}枠）</option>`).join('');
+
+  const rows=unassigned.map(s=>{
+    const prefNames=s.prefs
+      .filter(p=>p.commId)
+      .map((p,i)=>{
+        const c=getCommInfo(p.commId);
+        return `第${i+1}：${c?c.name:''}`;
+      }).join('　');
+    const ldrPrefs=LEADERS
+      .filter(ldr=>s.leaderPrefs[ldr.id]?.wish==='yes')
+      .map(ldr=>ldr.name).join('・');
+    const prefText=[ldrPrefs,prefNames].filter(Boolean).join('　') || '（希望なし）';
+
+    return `<div class="fallback-student-row" id="fb-row-${s.id}">
+      <div class="fallback-stu-info">
+        <div class="fallback-stu-name">${s.num}番 ${esc(s.name)}</div>
+        <div class="fallback-stu-prefs">希望：${prefText}</div>
+      </div>
+      <select class="fallback-select" id="fb-sel-${s.id}">
+        <option value="">委員会を選択</option>
+        ${commOptions}
+      </select>
+      <button class="fallback-assign-btn" onclick="doFallbackAssign('${s.id}')">割り当て</button>
+    </div>`;
+  }).join('');
+
+  el.innerHTML=`<div class="fallback-section">
+    <div class="fallback-header">
+      <span style="font-size:1.2rem">⚡</span>
+      <h3>希望外の児童を割り当て（${unassigned.length}名）</h3>
+    </div>
+    <div class="fallback-body">${rows}</div>
+  </div>`;
+}
+
+function doFallbackAssign(sid){
+  const sel=document.getElementById('fb-sel-'+sid);
+  if(!sel||!sel.value){ showToast('委員会を選択してください','error'); return; }
+  const commId=sel.value;
+  const comm=getCommInfo(commId);
+  const isLdr=isLdrId(commId);
+  const store=isLdr?leaderAsgn:assignments;
+  if(!store[commId]) store[commId]=[];
+
+  // 定員チェック
+  if(store[commId].length >= comm.cap){
+    showToast('この委員会は定員に達しています','error'); return;
+  }
+  // すでに他委員会に入っていれば外す
+  Object.keys(assignments).forEach(c=>{assignments[c]=(assignments[c]||[]).filter(x=>String(x)!==String(sid));});
+  Object.keys(leaderAsgn).forEach(l=>{leaderAsgn[l]=(leaderAsgn[l]||[]).filter(x=>String(x)!==String(sid));});
+
+  store[commId].push(sid);
+  save();
+  renderResult(); // 全体を再描画
+  showToast(`${comm.name} に割り当てました ✅`,'success');
+}
+
+// ============================================================
 // 結果タブ
 // ============================================================
 function renderResult(){
@@ -1015,6 +1149,9 @@ function renderResult(){
       </div>
     </div>`;
   }).join('');
+
+  // 希望外割り当てセクションも更新
+  renderFallback();
 }
 
 // ============================================================
