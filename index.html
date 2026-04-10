@@ -427,6 +427,9 @@ body {
             <button class="btn-sm primary" onclick="openAddStudentModal()">＋追加</button>
             <button class="btn-sm" onclick="clearAllStudents()" style="color:var(--danger);border-color:var(--danger)">全消去</button>
           </div>
+          <button class="btn-sm" onclick="importFromCMClass()" style="margin-top:5px;width:100%;background:#f0f9e8;border-color:var(--success);color:var(--success);font-size:0.7rem" title="CM CLASSの名簿を自動読み込み">
+            📥 CM CLASSから読込
+          </button>
         </div>
         <div class="student-list" id="studentList"></div>
       </div>
@@ -991,6 +994,43 @@ function exportCSV(){
 // ============================================================
 function esc(s){
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ============================================================
+// CM CLASS 名簿インポート
+// ============================================================
+function importFromCMClass() {
+  try {
+    const raw = localStorage.getItem('spa_master');
+    if (!raw) {
+      showToast('CM CLASSのデータが見つかりません', 'error');
+      return;
+    }
+    const master = JSON.parse(raw);
+    if (!master.students || master.students.length === 0) {
+      showToast('CM CLASSに児童が登録されていません', 'error');
+      return;
+    }
+    const existCount = students.length;
+    if (existCount > 0) {
+      if (!confirm(`現在${existCount}名のデータがあります。\nCM CLASSの名簿（${master.students.length}名）で上書きしますか？\n※委員会の決定データは保持されます`)) return;
+    }
+    const oldStudents = students.slice();
+    students = master.students.map(function(s, i) {
+      const num = i + 1;
+      const name = s.name || '';
+      const existing = oldStudents.find(function(os) {
+        return os.name === name && os.num === num;
+      });
+      if (existing) return existing;
+      return makeStu(Date.now() + Math.random() + i, num, name);
+    });
+    save();
+    renderStudentList();
+    showToast('CM CLASSから ' + students.length + ' 名を読み込みました ✅', 'success');
+  } catch(e) {
+    showToast('読み込みエラー: ' + e.message, 'error');
+  }
 }
 
 // ============================================================
