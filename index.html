@@ -845,15 +845,26 @@ function isAsgnAnywhere(sid){
 function renderCommDetail(commId){
   const comm=getCommInfo(commId);
   const isLdr=isLdrId(commId);
-  const apps=getApplicants(commId);
   const asgnArr=getAsgnList(commId);
   const badgeCls=isLdr?comm.cls:'';
   const note=isLdr
     ?'ランクABC×10。希望理由を読んでランクを付けてからスコア順に選んでください。'
     :'スコア＝理由ランク×10 ＋ 希望順位ボーナス（第一:3 第二:2 第三:1）';
 
+  // 全申込者（スコア順）
+  const allApps=getApplicants(commId);
+
+  // 「他委員会決定済みを隠す」フィルター（デフォルトON）
+  const hideAssigned = document.getElementById('toggleHideAssigned')?.checked !== false;
+  const apps = allApps.filter(a=>{
+    if(asgnArr.includes(a.student.id)) return true;  // この委員会の決定者は常に表示
+    if(hideAssigned && isAsgnAnywhere(a.student.id)) return false; // 他で決定済みは非表示
+    return true;
+  });
+  const hiddenCount = allApps.length - apps.length;
+
   const cards=apps.length===0
-    ?`<div class="no-applicants">この委員会への希望者はいません</div>`
+    ?`<div class="no-applicants">希望者がいません${hiddenCount>0?' （'+hiddenCount+'名は他委員会で決定済のため非表示）':''}</div>`
     :apps.map(a=>{
       const here=asgnArr.includes(a.student.id);
       const elsewhere=!here&&isAsgnAnywhere(a.student.id);
@@ -890,28 +901,51 @@ function renderCommDetail(commId){
       <div class="comm-detail-title">${comm.name}</div>
       <div class="comm-cap-badge ${badgeCls}">定員 ${comm.cap}名 ／ 現在 ${asgnArr.length}名</div>
     </div>
-    <p style="font-size:0.74rem;color:var(--muted);margin-bottom:13px">${note}</p>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+      <p style="font-size:0.74rem;color:var(--muted);flex:1">${note}</p>
+      <label style="display:flex;align-items:center;gap:5px;font-size:0.74rem;color:var(--ink2);white-space:nowrap;cursor:pointer">
+        <input type="checkbox" id="toggleHideAssigned" ${hideAssigned?'checked':''} onchange="renderCommDetail('${commId}')">
+        他委員会決定済みを隠す
+      </label>
+    </div>
+    ${hiddenCount>0&&!hideAssigned?'':(hiddenCount>0?`<p style="font-size:0.72rem;color:var(--muted);margin-bottom:8px">※ ${hiddenCount}名を非表示中</p>`:'') }
     ${cards}`;
 }
 
 function doAssign(cid,sid){
   const st=getAsgn(cid); if(!st[cid])st[cid]=[];
   if(!st[cid].includes(sid))st[cid].push(sid);
-  save(); renderCommTab(); showToast('決定しました','success');
+  save();
+  renderCommTab();          // 左パネルの人数カウント更新
+  renderCommDetail(cid);    // 現在の詳細パネル再描画（決定済み表示・定員満反映）
+  showToast('決定しました','success');
 }
 function doOverride(cid,sid){
   Object.keys(assignments).forEach(c=>{assignments[c]=(assignments[c]||[]).filter(x=>x!==sid);});
   Object.keys(leaderAsgn).forEach(l=>{leaderAsgn[l]=(leaderAsgn[l]||[]).filter(x=>x!==sid);});
-  doAssign(cid,sid); showToast('他から移動して決定しました');
+  const st=getAsgn(cid); if(!st[cid])st[cid]=[];
+  if(!st[cid].includes(sid))st[cid].push(sid);
+  save();
+  renderCommTab();
+  renderCommDetail(cid);
+  showToast('他から移動して決定しました');
 }
 function doUnassign(cid,sid){
   const st=getAsgn(cid); if(st[cid])st[cid]=st[cid].filter(x=>x!==sid);
-  save(); renderCommTab(); if(activeComm===cid)renderCommDetail(cid); showToast('取り消しました');
+  save();
+  renderCommTab();
+  if(activeComm===cid)renderCommDetail(cid);
+  showToast('取り消しました');
 }
 
-// ============================================================
-// 結果タブ
-// ============================================================
+// 決定変更のたびに結果タブも更新
+function refreshAll(cid){
+  save();
+  renderCommTab();
+  if(activeComm===cid) renderCommDetail(cid);
+  // 結果タブが表示中なら即更新
+  if(document.getElementById('tab-result').classList.contains('active')) renderResult();
+}
 function renderResult(){
   const allAsgn=[...Object.values(assignments),...Object.values(leaderAsgn)].flat();
   const unassigned=students.filter(s=>!allAsgn.includes(s.id));
