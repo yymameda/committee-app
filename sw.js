@@ -1,7 +1,7 @@
 // Service Worker — 委員会決定システム PWA
 // キャッシュファースト + バージョン管理
 
-const CACHE_VERSION = 'v1.1.1';
+const CACHE_VERSION = 'v1.1.2';
 const CACHE_NAME = 'committee-app-' + CACHE_VERSION;
 const ASSETS = [
   './',

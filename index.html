@@ -458,6 +458,7 @@ body {
     <button class="htab" onclick="switchTab('committee')">② 選考</button>
     <button class="htab" onclick="switchTab('result')">③ 決定結果</button>
   </div>
+  <button class="htab" onclick="openBackupModal()" title="バックアップ・復元" style="background:rgba(255,255,255,0.15);padding:5px 10px">💾</button>
 </div>
 
 <div class="main">
@@ -557,6 +558,50 @@ body {
     <div class="modal-footer">
       <button class="btn-modal-cancel" onclick="closeModal('pasteModal')">キャンセル</button>
       <button class="btn-modal-ok" onclick="executePasteImport()">読み込む</button>
+    </div>
+  </div>
+</div>
+
+<!-- バックアップ・復元モーダル -->
+<div class="modal-overlay" id="backupModal">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <h3>💾 バックアップ・復元</h3>
+      <button class="modal-close" onclick="closeModal('backupModal')">×</button>
+    </div>
+    <div class="modal-body" style="padding:16px 18px">
+
+      <!-- バックアップ -->
+      <div style="margin-bottom:18px">
+        <div style="font-size:0.84rem;font-weight:700;color:var(--primary);margin-bottom:10px;display:flex;align-items:center;gap:6px">
+          <span style="font-size:1rem">📤</span> バックアップ
+        </div>
+        <label class="form-label">パスワード（省略可：暗号化なし）</label>
+        <input class="form-input" id="backupPassword" type="password" placeholder="設定しない場合は空欄のまま">
+        <div style="display:flex;gap:8px">
+          <button class="btn-modal-ok" style="flex:1;padding:9px" onclick="doBackup()">📥 ファイルに保存</button>
+        </div>
+      </div>
+
+      <div style="border-top:1px solid var(--border);margin-bottom:18px"></div>
+
+      <!-- 復元 -->
+      <div>
+        <div style="font-size:0.84rem;font-weight:700;color:var(--success);margin-bottom:10px;display:flex;align-items:center;gap:6px">
+          <span style="font-size:1rem">📥</span> 復元
+        </div>
+        <label class="form-label">バックアップファイル (.json)</label>
+        <input type="file" id="restoreFile" accept=".json"
+          onchange="onRestoreFileChange()"
+          style="width:100%;padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:0.84rem;font-family:inherit;background:white;margin-bottom:11px;cursor:pointer">
+        <label class="form-label" id="restorePasswordLabel" style="display:none">パスワード</label>
+        <input class="form-input" id="restorePassword" type="password"
+          placeholder="暗号化ファイルのパスワード" style="display:none">
+        <button class="btn-modal-ok" style="width:100%;padding:9px;background:var(--success)" onclick="doRestore()">🔄 復元する</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-modal-cancel" onclick="closeModal('backupModal')">閉じる</button>
     </div>
   </div>
 </div>
@@ -1280,6 +1325,147 @@ function importFromCMClass() {
   } catch(e) {
     showToast('読み込みエラー: ' + e.message, 'error');
   }
+}
+
+// ============================================================
+// バックアップ・復元
+// ============================================================
+
+// AES-GCM: パスワードから鍵を導出
+async function _deriveKey(password, salt) {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw', enc.encode(password), {name:'PBKDF2'}, false, ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    {name:'PBKDF2', salt, iterations:100000, hash:'SHA-256'},
+    keyMaterial,
+    {name:'AES-GCM', length:256},
+    false,
+    ['encrypt','decrypt']
+  );
+}
+
+// 暗号化 → base64文字列
+async function _encrypt(plaintext, password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv   = crypto.getRandomValues(new Uint8Array(12));
+  const key  = await _deriveKey(password, salt);
+  const enc  = new TextEncoder();
+  const cipher = await crypto.subtle.encrypt({name:'AES-GCM', iv}, key, enc.encode(plaintext));
+  const combined = new Uint8Array(salt.length + iv.length + cipher.byteLength);
+  combined.set(salt, 0);
+  combined.set(iv, salt.length);
+  combined.set(new Uint8Array(cipher), salt.length + iv.length);
+  return btoa(String.fromCharCode(...combined));
+}
+
+// 復号
+async function _decrypt(b64, password) {
+  const combined = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const salt = combined.slice(0, 16);
+  const iv   = combined.slice(16, 28);
+  const cipher = combined.slice(28);
+  const key = await _deriveKey(password, salt);
+  const plain = await crypto.subtle.decrypt({name:'AES-GCM', iv}, key, cipher);
+  return new TextDecoder().decode(plain);
+}
+
+// ファイル共有（Web Share API対応端末）またはダウンロード
+function universalShare(blob, filename) {
+  const file = new File([blob], filename, {type: blob.type});
+  if (navigator.share && navigator.canShare && navigator.canShare({files:[file]})) {
+    navigator.share({files:[file], title:filename}).catch(() => _downloadBlob(blob, filename));
+  } else {
+    _downloadBlob(blob, filename);
+  }
+}
+function _downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+function openBackupModal() {
+  document.getElementById('backupPassword').value = '';
+  document.getElementById('restoreFile').value = '';
+  document.getElementById('restorePassword').value = '';
+  document.getElementById('restorePassword').style.display = 'none';
+  document.getElementById('restorePasswordLabel').style.display = 'none';
+  document.getElementById('backupModal').classList.add('active');
+}
+
+async function doBackup() {
+  const password = document.getElementById('backupPassword').value;
+  const today = new Date().toISOString().slice(0,10).replace(/-/g,'');
+  const filename = 'committee_backup_' + today + '.json';
+  const dataObj = {cm2_stu: students, cm2_asgn: assignments, cm2_ldr: leaderAsgn};
+  let payload;
+  try {
+    if (password) {
+      const encrypted = await _encrypt(JSON.stringify(dataObj), password);
+      payload = JSON.stringify({
+        app:'committee-app', version:1,
+        date: new Date().toISOString(),
+        encrypted:true, payload:encrypted
+      });
+    } else {
+      payload = JSON.stringify({
+        app:'committee-app', version:1,
+        date: new Date().toISOString(),
+        encrypted:false, data:dataObj
+      }, null, 2);
+    }
+  } catch(e) {
+    showToast('暗号化に失敗しました: ' + e.message, 'error'); return;
+  }
+  const blob = new Blob([payload], {type:'application/json'});
+  universalShare(blob, filename);
+  closeModal('backupModal');
+  showToast('バックアップを保存しました ✅', 'success');
+}
+
+function onRestoreFileChange() {
+  const file = document.getElementById('restoreFile').files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const json = JSON.parse(e.target.result);
+      const show = !!json.encrypted;
+      document.getElementById('restorePasswordLabel').style.display = show ? 'block' : 'none';
+      document.getElementById('restorePassword').style.display = show ? 'block' : 'none';
+    } catch(_) {}
+  };
+  reader.readAsText(file);
+}
+
+async function doRestore() {
+  const fileInput = document.getElementById('restoreFile');
+  if (!fileInput.files.length) { showToast('ファイルを選択してください', 'error'); return; }
+  let json;
+  try { json = JSON.parse(await fileInput.files[0].text()); }
+  catch(_) { showToast('JSONファイルが無効です', 'error'); return; }
+  if (json.app !== 'committee-app') { showToast('このアプリのバックアップではありません', 'error'); return; }
+  let data;
+  if (json.encrypted) {
+    const pw = document.getElementById('restorePassword').value;
+    if (!pw) { showToast('パスワードを入力してください', 'error'); return; }
+    try { data = JSON.parse(await _decrypt(json.payload, pw)); }
+    catch(_) { showToast('パスワードが違うか、ファイルが破損しています', 'error'); return; }
+  } else {
+    data = json.data;
+  }
+  if (!confirm('現在のデータをバックアップから上書き復元しますか？')) return;
+  students    = data.cm2_stu  || [];
+  assignments = data.cm2_asgn || {};
+  leaderAsgn  = data.cm2_ldr  || {};
+  activeStu   = null;
+  save(); renderStudentList();
+  closeModal('backupModal');
+  showToast('復元しました ✅', 'success');
 }
 
 // ============================================================
